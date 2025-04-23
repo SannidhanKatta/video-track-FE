@@ -22,11 +22,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const [currentTime, setCurrentTime] = useState<number>(0);
     const [isSeeking, setIsSeeking] = useState<boolean>(false);
     const hasSetInitialPosition = useRef<boolean>(false);
+    const durationSetRef = useRef<boolean>(false);
 
     const {
+        progress,
         isLoading,
         error,
-        progressPercentage,
         skippedAhead,
         handlePlay,
         handlePause,
@@ -34,15 +35,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         lastPosition,
         isInitialized,
         isCompleted,
+        resetProgress
     } = useVideoProgress({
         videoId,
         userId,
         duration,
     });
 
-    // Reset hasSetInitialPosition when video changes
+    // Reset state when video changes
     useEffect(() => {
         hasSetInitialPosition.current = false;
+        durationSetRef.current = false;
+        setDuration(0);
+        setCurrentTime(0);
     }, [videoId]);
 
     // Handle initial video position
@@ -108,7 +113,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const onTimeUpdate = useCallback(() => {
         if (!videoRef.current) return;
-        handleTimeUpdate(videoRef.current.currentTime);
+        const time = videoRef.current.currentTime;
+        setCurrentTime(time);
+        handleTimeUpdate(time);
     }, [handleTimeUpdate]);
 
     // Add event listeners when the video element is ready
@@ -117,31 +124,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (!videoElement) return;
 
         const handleLoadedMetadata = () => {
-            if (videoElement.duration && videoElement.duration !== Infinity) {
-                onDurationChange(videoElement.duration);
+            if (videoElement.duration && videoElement.duration !== Infinity && !durationSetRef.current) {
+                const videoDuration = videoElement.duration;
+                setDuration(videoDuration);
+                onDurationChange(videoDuration);
+                durationSetRef.current = true;
             }
         };
 
         videoElement.addEventListener('loadedmetadata', handleLoadedMetadata);
+        videoElement.addEventListener('durationchange', handleLoadedMetadata);
         videoElement.addEventListener('play', onPlay);
         videoElement.addEventListener('pause', onPause);
         videoElement.addEventListener('timeupdate', onTimeUpdate);
 
         return () => {
             videoElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
+            videoElement.removeEventListener('durationchange', handleLoadedMetadata);
             videoElement.removeEventListener('play', onPlay);
             videoElement.removeEventListener('pause', onPause);
             videoElement.removeEventListener('timeupdate', onTimeUpdate);
         };
     }, [onPlay, onPause, onTimeUpdate, onDurationChange]);
-
-    const onLoadedMetadata = useCallback(() => {
-        if (videoRef.current) {
-            const videoDuration = videoRef.current.duration;
-            setDuration(videoDuration);
-            onDurationChange(videoDuration);
-        }
-    }, [onDurationChange]);
 
     const onSeeking = useCallback(() => {
         setIsSeeking(true);
@@ -162,10 +166,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     // Subscribe to progress updates
     useEffect(() => {
-        if (progressPercentage !== undefined) {
-            onProgress(progressPercentage, isCompleted);
+        if (duration > 0) {
+            onProgress(progress, isCompleted);
         }
-    }, [progressPercentage, isCompleted, onProgress]);
+    }, [progress, isCompleted, onProgress, duration]);
 
     if (error) {
         return (
@@ -181,7 +185,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 ref={videoRef}
                 className="w-full aspect-video"
                 src={videoUrl}
-                onLoadedMetadata={onLoadedMetadata}
                 onTimeUpdate={onTimeUpdate}
                 onPlay={onPlay}
                 onPause={onPause}
@@ -194,9 +197,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             {/* Progress Display */}
             <div className="p-4 bg-gray-800">
                 <ProgressBar
-                    progress={progressPercentage || 0}
-                    isLoading={isLoading}
+                    progress={duration > 0 ? progress : 0}
+                    isLoading={isLoading || duration === 0}
                     skippedAhead={skippedAhead}
+                    isCompleted={isCompleted}
                 />
                 <div className="text-white text-sm mt-2">
                     {formatTime(currentTime)} / {formatTime(duration)}

@@ -139,18 +139,12 @@ const DEMO_USER_ID = 'user123';
 function App() {
   const [videos, setVideos] = useState<Video[]>(DEMO_VIDEOS);
   const [currentVideo, setCurrentVideo] = useState<Video>(videos[0]);
+  const [isSidebarOpen, setSidebarOpen] = useState(true);
 
-  // Clear stored progress for all videos
-  useEffect(() => {
-    const clearStoredProgress = () => {
-      DEMO_VIDEOS.forEach(video => {
-        localStorage.removeItem(`video-progress-${DEMO_USER_ID}-${video.id}`);
-      });
-    };
-
-    // Clear stored progress
-    clearStoredProgress();
-  }, []); // Run only once on component mount
+  // Toggle sidebar
+  const toggleSidebar = () => {
+    setSidebarOpen(!isSidebarOpen);
+  };
 
   // Load initial progress and durations from local storage
   useEffect(() => {
@@ -222,9 +216,9 @@ function App() {
 
   // Update video progress
   const handleVideoProgress = (videoId: string, progress: number, isCompleted: boolean) => {
-    // Don't update if progress is 100% but video hasn't been actually watched
+    // Only check for artificial jumps if the video isn't marked as completed
     const currentVideoData = videos.find(v => v.id === videoId);
-    if (currentVideoData && progress === 100 && !currentVideoData.isCompleted) {
+    if (currentVideoData && progress === 100 && !currentVideoData.isCompleted && !isCompleted) {
       // Check if this is an artificial 100% (immediate jump to end)
       const storedProgress = localStorage.getItem(`video-progress-${DEMO_USER_ID}-${videoId}`);
       if (!storedProgress || JSON.parse(storedProgress).progress < 95) {
@@ -296,27 +290,33 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#121212] flex">
-      {/* Preload all video durations */}
-      {videos.map(video => (
-        <VideoPreloader
-          key={video.id}
-          video={video}
-          onDurationChange={handleDurationChange}
-        />
-      ))}
-
-      {/* Sidebar */}
-      <Sidebar
-        videos={videos}
-        currentVideo={currentVideo}
-        onSelectVideo={(video: Video) => setCurrentVideo(video)}
-      />
+    <div className="min-h-screen bg-[#121212] flex flex-col md:flex-row">
+      {/* Hamburger Menu - Visible on mobile */}
+      <button
+        onClick={toggleSidebar}
+        className="fixed top-4 right-4 z-50 p-2 text-white rounded-lg md:hidden hover:bg-white/10"
+        aria-label="Toggle Sidebar"
+      >
+        <svg
+          className="w-6 h-6"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M4 6h16M4 12h16M4 18h16"
+          />
+        </svg>
+      </button>
 
       {/* Main Content */}
-      <div className="flex-1 p-8">
+      <div className="flex-1 p-4 md:p-8">
         <div className="mx-auto max-w-4xl">
-          <div className="mb-6">
+          <div className="pr-16 mb-6 md:pr-0">
             <h1 className="text-2xl font-bold text-white">{currentVideo.title}</h1>
           </div>
 
@@ -334,11 +334,29 @@ function App() {
 
           <div className="p-4 mt-4 rounded-lg border bg-blue-900/20 border-blue-700/50">
             <div className="text-blue-400">
-              <p>Watch the video to track your progress. Progress is saved automatically.</p>
+              <p>You must watch the entire video without moving or skipping it for it to count towards your progress.</p>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Preload all video durations */}
+      {videos.map(video => (
+        <VideoPreloader
+          key={video.id}
+          video={video}
+          onDurationChange={handleDurationChange}
+        />
+      ))}
+
+      {/* Sidebar */}
+      <Sidebar
+        videos={videos}
+        currentVideo={currentVideo}
+        onSelectVideo={(video: Video) => setCurrentVideo(video)}
+        isOpen={isSidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
     </div>
   );
 }

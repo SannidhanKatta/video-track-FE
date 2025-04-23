@@ -4,12 +4,14 @@ interface ProgressBarProps {
     progress: number;
     isLoading?: boolean;
     skippedAhead?: boolean;
+    isCompleted?: boolean;
 }
 
 export const ProgressBar: React.FC<ProgressBarProps> = ({
     progress,
     isLoading = false,
     skippedAhead = false,
+    isCompleted = false,
 }) => {
     const progressValue = Math.min(Math.max(progress, 0), 100);
 
@@ -19,7 +21,11 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
             <div className="relative h-3 bg-gray-700 rounded-full overflow-hidden">
                 {/* Main Progress Bar */}
                 <div
-                    className={`absolute h-full transition-all duration-300 ease-out ${skippedAhead ? 'bg-yellow-500' : 'bg-gradient-to-r from-blue-500 to-blue-600'
+                    className={`absolute h-full transition-all duration-300 ease-out ${isCompleted
+                        ? 'bg-gradient-to-r from-blue-500 to-blue-600'
+                        : skippedAhead
+                            ? 'bg-yellow-500'
+                            : 'bg-gradient-to-r from-blue-500 to-blue-600'
                         }`}
                     style={{ width: `${progressValue}%` }}
                 />
@@ -30,8 +36,8 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
                         <div
                             key={index}
                             className={`w-px h-full ${progressValue >= (index + 1) * 10
-                                    ? 'bg-white/20'
-                                    : 'bg-gray-600/20'
+                                ? 'bg-white/20'
+                                : 'bg-gray-600/20'
                                 }`}
                         />
                     ))}
@@ -47,11 +53,16 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
                     ) : (
-                        <div className={`w-2 h-2 rounded-full ${skippedAhead ? 'bg-yellow-500' : 'bg-blue-500'}`} />
+                        <div className={`w-2 h-2 rounded-full ${isCompleted
+                            ? 'bg-blue-500'
+                            : skippedAhead
+                                ? 'bg-yellow-500'
+                                : 'bg-blue-500'
+                            }`} />
                     )}
                     <span>{Math.round(progressValue)}% completed</span>
                 </div>
-                {skippedAhead && (
+                {skippedAhead && !isCompleted && (
                     <div className="text-xs text-yellow-500">
                         Please watch without skipping
                     </div>

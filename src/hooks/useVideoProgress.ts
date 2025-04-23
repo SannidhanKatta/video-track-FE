@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { IInterval, IProgress, getProgress, updateProgress, emitProgressUpdate, initializeSocket } from '../services/api';
 
-const PROGRESS_UPDATE_INTERVAL = 30000; // Server update interval: 30 seconds
+const PROGRESS_UPDATE_INTERVAL = 5000; // Reduced to 5 seconds for more frequent updates
 const UI_UPDATE_INTERVAL = 1000; // UI update interval: 1 second
 const MINIMUM_WATCH_TIME = 1; // 1 second
 const SKIP_THRESHOLD = 10; // 10 seconds
+const COMPLETION_THRESHOLD = 95; // 95% completion threshold
 
 const DEBUG = true;
 
@@ -26,7 +27,7 @@ interface LocalStorageProgress {
 }
 
 export const useVideoProgress = ({ videoId, userId, duration }: UseVideoProgressProps) => {
-    const [progress, setProgress] = useState<IProgress | null>(null);
+    const [serverProgress, setServerProgress] = useState<IProgress | null>(null);
     const [localProgress, setLocalProgress] = useState<number>(0);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -158,6 +159,8 @@ export const useVideoProgress = ({ videoId, userId, duration }: UseVideoProgress
     useEffect(() => {
         const loadProgress = async () => {
             try {
+                setIsLoading(true);
+                setIsInitialized(false);
                 debugLog('Loading initial progress');
 
                 // Try to load from local storage first
@@ -187,7 +190,7 @@ export const useVideoProgress = ({ videoId, userId, duration }: UseVideoProgress
                 // Load from server without blocking
                 getProgress(videoId, userId)
                     .then(serverData => {
-                        setProgress(serverData);
+                        setServerProgress(serverData);
                         setError(null);
 
                         // Use server data if it's more recent and video wasn't fully watched locally
@@ -251,101 +254,122 @@ export const useVideoProgress = ({ videoId, userId, duration }: UseVideoProgress
         }
     }, [calculateProgress, saveToLocalStorage, debugLog]);
 
-    // Handle time update with debouncing
+    // Save progress to server
+    const saveProgress = useCallback(async (currentTime: number) => {
+        if (!currentIntervalRef.current) return;
+
+        try {
+            const serverProgress = await updateProgress(
+                videoId,
+                userId,
+                currentIntervalRef.current,
+                currentTime
+            );
+
+            // Update local state with server response
+            setServerProgress(serverProgress);
+            setError(null);
+
+            // Save to local storage
+            saveToLocalStorage();
+
+            // Emit progress update for real-time sync
+            emitProgressUpdate({
+                videoId,
+                userId,
+                progress: serverProgress
+            });
+
+            debugLog('Progress saved to server', { serverProgress });
+        } catch (err) {
+            console.error('Error saving progress:', err);
+            setError('Failed to save progress');
+        }
+    }, [videoId, userId, saveToLocalStorage, debugLog]);
+
+    // Update progress tracking
     const handleTimeUpdate = useCallback((currentTime: number) => {
-        if (!isPlayingRef.current) return;
+        if (!isPlayingRef.current || !duration) return;
 
         const now = Date.now();
-        const timeDiff = Math.abs(currentTime - lastKnownPositionRef.current);
-        const isSkipForward = currentTime > lastKnownPositionRef.current && timeDiff > SKIP_THRESHOLD;
+        const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
+        const timeSinceLastUIUpdate = now - lastUIUpdateTimeRef.current;
 
-        // Prevent sudden jumps to 100%
-        if (currentTime === duration && lastKnownPositionRef.current < duration * 0.9) {
-            setSkippedAhead(true);
-            return;
-        }
-
-        if (timeDiff > SKIP_THRESHOLD) {
-            setSkippedAhead(isSkipForward);
-
-            // Save current interval if it's valid
-            if (currentIntervalRef.current && !isSkipForward) {
-                currentIntervalRef.current.end = lastKnownPositionRef.current;
-                if (currentIntervalRef.current.end - currentIntervalRef.current.start >= MINIMUM_WATCH_TIME) {
-                    intervalsRef.current.push({ ...currentIntervalRef.current });
-                }
-            }
-
-            // Start new interval
+        // Update current interval
+        if (currentIntervalRef.current) {
+            currentIntervalRef.current.end = currentTime;
+        } else {
             currentIntervalRef.current = {
                 start: currentTime,
                 end: currentTime
             };
-        } else {
-            setSkippedAhead(false);
+        }
+
+        // Check for skips
+        const timeDiff = Math.abs(currentTime - lastKnownPositionRef.current);
+        if (timeDiff > SKIP_THRESHOLD) {
+            // End current interval and mark skip
             if (currentIntervalRef.current) {
-                currentIntervalRef.current.end = currentTime;
-
-                // Clear existing timeout
-                if (updateTimeoutRef.current) {
-                    clearTimeout(updateTimeoutRef.current);
-                }
-
-                // Set new timeout for UI update
-                updateTimeoutRef.current = setTimeout(() => {
-                    const newProgress = calculateProgress();
-                    setLocalProgress(newProgress);
-                    lastUIUpdateTimeRef.current = now;
-
-                    // Server update
-                    if (now - lastUpdateTimeRef.current >= PROGRESS_UPDATE_INTERVAL) {
-                        const currentInterval = currentIntervalRef.current;
-                        if (currentInterval) {
-                            intervalsRef.current.push({ ...currentInterval });
-                            saveToLocalStorage();
-
-                            // Update server
-                            updateProgress(videoId, userId, currentInterval, lastKnownPositionRef.current)
-                                .then(updatedProgress => {
-                                    setProgress(updatedProgress);
-                                    emitProgressUpdate({ videoId, userId, progress: updatedProgress });
-                                })
-                                .catch(console.error);
-
-                            lastUpdateTimeRef.current = now;
-                            currentIntervalRef.current = {
-                                start: currentTime,
-                                end: currentTime
-                            };
-                        }
-                    }
-                }, UI_UPDATE_INTERVAL);
+                intervalsRef.current.push({ ...currentIntervalRef.current });
+                currentIntervalRef.current = {
+                    start: currentTime,
+                    end: currentTime
+                };
             }
+            setSkippedAhead(true);
+            debugLog('Skip detected', { timeDiff, currentTime, lastPosition: lastKnownPositionRef.current });
+        }
+
+        // Update UI more frequently
+        if (timeSinceLastUIUpdate >= UI_UPDATE_INTERVAL) {
+            const newProgress = calculateProgress();
+            setLocalProgress(newProgress);
+            lastUIUpdateTimeRef.current = now;
+        }
+
+        // Save to server less frequently
+        if (timeSinceLastUpdate >= PROGRESS_UPDATE_INTERVAL) {
+            // Save current interval
+            if (currentIntervalRef.current &&
+                currentIntervalRef.current.end - currentIntervalRef.current.start >= MINIMUM_WATCH_TIME) {
+                intervalsRef.current.push({ ...currentIntervalRef.current });
+                currentIntervalRef.current = {
+                    start: currentTime,
+                    end: currentTime
+                };
+            }
+
+            // Calculate progress and save
+            const newProgress = calculateProgress();
+            setLocalProgress(newProgress);
+            saveProgress(currentTime);
+            lastUpdateTimeRef.current = now;
         }
 
         lastKnownPositionRef.current = currentTime;
-    }, [videoId, userId, calculateProgress, saveToLocalStorage, duration]);
+    }, [duration, calculateProgress, saveProgress, debugLog]);
 
-    // Cleanup function
+    // Cleanup function with proper ref handling
     useEffect(() => {
+        const timeoutRef = updateTimeoutRef.current;
         return () => {
-            if (updateTimeoutRef.current) {
-                clearTimeout(updateTimeoutRef.current);
+            if (timeoutRef) {
+                clearTimeout(timeoutRef);
             }
         };
     }, []);
 
     return {
-        progress,
+        progress: localProgress,
         isLoading,
         error,
-        progressPercentage: localProgress,
         skippedAhead,
-        handlePlay,
-        handlePause,
-        handleTimeUpdate,
         lastPosition: lastKnownPositionRef.current,
         isInitialized,
         isCompleted,
+        handlePlay,
+        handlePause,
+        handleTimeUpdate,
+        resetProgress
     };
 }; 

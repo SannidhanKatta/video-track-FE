@@ -1,16 +1,46 @@
 import axios from 'axios';
 import { io, Socket } from 'socket.io-client';
 
-const API_URL = process.env.REACT_APP_API_URL || '/api';
-const WS_URL = process.env.REACT_APP_WS_URL || '';
+const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const WS_URL = process.env.REACT_APP_WS_URL || 'ws://localhost:5000';
 
 // Create axios instance
 const api = axios.create({
-    baseURL: API_URL,
+    baseURL: `${BASE_URL}/api`,
     headers: {
         'Content-Type': 'application/json',
     },
+    withCredentials: true
 });
+
+// Add request interceptor for debugging
+api.interceptors.request.use(request => {
+    console.log('Starting Request:', {
+        url: request.url || '',
+        method: request.method,
+        headers: request.headers,
+        baseURL: request.baseURL || '',
+        fullUrl: `${request.baseURL || ''}${request.url || ''}`
+    });
+    return request;
+});
+
+// Add response interceptor for debugging
+api.interceptors.response.use(
+    response => {
+        console.log('Response:', response);
+        return response;
+    },
+    error => {
+        console.error('API Error:', {
+            url: error.config?.url,
+            method: error.config?.method,
+            status: error.response?.status,
+            data: error.response?.data
+        });
+        return Promise.reject(error);
+    }
+);
 
 // Socket.io instance
 let socket: Socket | null = null;
@@ -33,7 +63,16 @@ export const initializeSocket = () => {
     if (!socket) {
         socket = io(WS_URL, {
             path: '/socket.io',
-            withCredentials: true
+            withCredentials: true,
+            transports: ['websocket']
+        });
+
+        socket.on('connect', () => {
+            console.log('Socket connected:', socket?.id);
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Socket connection error:', error);
         });
     }
     return socket;
